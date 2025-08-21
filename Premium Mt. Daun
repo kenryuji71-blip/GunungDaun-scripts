@@ -1,4 +1,4 @@
--- LocalScript / Executor
+8-- LocalScript / Executor
 local player = game.Players.LocalPlayer
 local char = player.Character or player.CharacterAdded:Wait()
 
@@ -92,43 +92,229 @@ pauseBtn.Text = "Pause Auto Teleport"
 pauseBtn.TextColor3 = Color3.new(1,1,1)
 pauseBtn.BackgroundColor3 = Color3.fromRGB(40,40,40)
 pauseBtn.Font = Enum.Font.SourceSans
-pauseBtn.TextSize = 16
-Instance.new("UICorner", pauseBtn).CornerRadius = UDim.new(0,8)
-pauseBtn.MouseButton1Click:Connect(pauseAutoTeleport)
+-- LocalScript / Executor
+local player = game.Players.LocalPlayer
+local char = player.Character or player.CharacterAdded:Wait()
+local hum = char:WaitForChild("Humanoid")
+local uis = game:GetService("UserInputService")
+local tweenService = game:GetService("TweenService")
 
--- Tombol Resume
-local resumeBtn = Instance.new("TextButton", frame)
-resumeBtn.Size = UDim2.new(1,-20,0,30)
-resumeBtn.Position = UDim2.new(0,10,0,90)
-resumeBtn.Text = "Resume Auto Teleport"
-resumeBtn.TextColor3 = Color3.new(1,1,1)
-resumeBtn.BackgroundColor3 = Color3.fromRGB(40,40,40)
-resumeBtn.Font = Enum.Font.SourceSans
-resumeBtn.TextSize = 16
-Instance.new("UICorner", resumeBtn).CornerRadius = UDim.new(0,8)
-resumeBtn.MouseButton1Click:Connect(resumeAutoTeleport)
+-- Daftar checkpoint Gunung Daun
+local checkpoints = {
+    Vector3.new(-7, 13, -10),       -- Basecamp
+    Vector3.new(-623, 250, -384),   -- Pos 1
+    Vector3.new(-1204, 261, -488),  -- Pos 2
+    Vector3.new(-1399, 578, -951),  -- Pos 3
+    Vector3.new(-1701, 816, -1400), -- Pos 4
+    Vector3.new(-3237, 1710, -2549) -- Puncak
+}
 
--- Tombol teleport manual per checkpoint
-for i, pos in ipairs(checkpoints) do
-    local btn = Instance.new("TextButton", frame)
-    btn.Size = UDim2.new(1,-20,0,25)
-    btn.Position = UDim2.new(0,10,0,130 + (i-1)*30)
-    btn.Text = "Teleport to Pos "..i
-    btn.TextColor3 = Color3.new(1,1,1)
-    btn.BackgroundColor3 = Color3.fromRGB(40,40,40)
-    btn.Font = Enum.Font.SourceSans
-    btn.TextSize = 14
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0,8)
+-- Variabel kontrol
+local autoTeleport = false
+local teleportDelay = 1
+local currentIndex = 1
+local paused = false
+local loopEnabled = false -- kontrol auto loop
 
-    btn.MouseButton1Click:Connect(function()
-        saveCheckpoint(i)
-        teleportTo(pos)
+-- Hotkey map
+local hotkeys = {
+    Start = Enum.KeyCode.F1,
+    Pause = Enum.KeyCode.F2,
+    Resume = Enum.KeyCode.F3,
+    LoopToggle = Enum.KeyCode.F10, -- tombol untuk aktif/mati auto loop
+    Checkpoints = {
+        [1] = Enum.KeyCode.F4,
+        [2] = Enum.KeyCode.F5,
+        [3] = Enum.KeyCode.F6,
+        [4] = Enum.KeyCode.F7,
+        [5] = Enum.KeyCode.F8,
+        [6] = Enum.KeyCode.F9
+    }
+}
+
+-- Anti-fall damage
+local function preventFallDamage()
+    if hum then
+        hum:GetPropertyChangedSignal("Health"):Connect(function()
+            if hum.Health < hum.MaxHealth then
+                hum.Health = hum.MaxHealth
+            end
+        end)
+        hum.StateChanged:Connect(function(_, newState)
+            if newState == Enum.HumanoidStateType.Freefall or newState == Enum.HumanoidStateType.FallingDown then
+                hum:ChangeState(Enum.HumanoidStateType.Physics)
+            end
+        end)
+    end
+end
+
+-- Teleport smooth
+local function teleportTo(location)
+    char = player.Character or player.CharacterAdded:Wait()
+    hum = char:WaitForChild("Humanoid")
+    local hrp = char:WaitForChild("HumanoidRootPart")
+    local steps = 25
+    local startPos = hrp.Position
+    local targetPos = location + Vector3.new(0,5,0)
+
+    for i = 1, steps do
+        hrp.CFrame = CFrame.new(startPos:Lerp(targetPos, i/steps))
+        task.wait(0.05)
+    end
+end
+
+-- Notifikasi kecil
+local function showNotification(text)
+    local notifGui = Instance.new("ScreenGui", game:GetService("CoreGui"))
+    notifGui.ResetOnSpawn = false
+    local frame = Instance.new("Frame", notifGui)
+    frame.Size = UDim2.new(0,200,0,40)
+    frame.Position = UDim2.new(0.5,-100,0.1,0)
+    frame.BackgroundColor3 = Color3.fromRGB(25,25,25)
+    frame.BorderSizePixel = 0
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0,8)
+
+    local label = Instance.new("TextLabel", frame)
+    label.Size = UDim2.new(1,0,1,0)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextColor3 = Color3.new(1,1,1)
+    label.Font = Enum.Font.SourceSansBold
+    label.TextSize = 16
+
+    local tween = tweenService:Create(frame, TweenInfo.new(0.5), {Position = frame.Position + UDim2.new(0,0,0.05,0)})
+    tween:Play()
+
+    task.delay(2, function()
+        local tweenOut = tweenService:Create(frame, TweenInfo.new(0.5), {Position = frame.Position - UDim2.new(0,0,0.05,0)})
+        tweenOut:Play()
+        tweenOut.Completed:Connect(function()
+            notifGui:Destroy()
+        end)
     end)
 end
 
--- Auto-respawn ke checkpoint terakhir
-player.CharacterAdded:Connect(function(newChar)
-    char = newChar
-    task.wait(1)
-    teleportTo(checkpoints[currentIndex])
+-- Auto teleport berurutan dengan loop
+local function startAutoTeleport()
+    autoTeleport = true
+    while autoTeleport do
+        if not paused then
+            teleportTo(checkpoints[currentIndex])
+            showNotification("Checkpoint "..currentIndex.." reached!")
+            currentIndex += 1
+
+            -- Jika sudah sampai Puncak
+            if currentIndex > #checkpoints then
+                if loopEnabled then
+                    currentIndex = 1
+                    showNotification("Restarting loop at Basecamp!")
+                else
+                    autoTeleport = false
+                    break
+                end
+            end
+        end
+        task.wait(teleportDelay)
+    end
+end
+
+local function stopAutoTeleport() autoTeleport = false end
+local function pauseAutoTeleport() paused = true end
+local function resumeAutoTeleport() paused = false end
+local function saveCheckpoint(index) currentIndex = index end
+
+-- GUI Hotkey Display
+local screenGui = Instance.new("ScreenGui", game:GetService("CoreGui"))
+screenGui.Name = "HotkeyDisplay_"..math.random(1000,9999)
+
+local frame = Instance.new("Frame", screenGui)
+frame.Size = UDim2.new(0,220,0,200)
+frame.Position = UDim2.new(0,20,0.5,-100)
+frame.BackgroundColor3 = Color3.fromRGB(30,30,30)
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0,12)
+
+local title = Instance.new("TextLabel", frame)
+title.Size = UDim2.new(1,0,0,25)
+title.Position = UDim2.new(0,0,0,0)
+title.BackgroundTransparency = 1
+title.Text = "Hotkey Controller"
+title.TextColor3 = Color3.new(1,1,1)
+title.Font = Enum.Font.SourceSansBold
+title.TextSize = 18
+
+-- Tombol minimize
+local minBtn = Instance.new("TextButton", frame)
+minBtn.Size = UDim2.new(0,30,0,25)
+minBtn.Position = UDim2.new(1,-30,0,0)
+minBtn.Text = "_"
+minBtn.TextColor3 = Color3.new(1,1,1)
+minBtn.BackgroundColor3 = Color3.fromRGB(50,50,50)
+Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0,5)
+
+local minimized = false
+minBtn.MouseButton1Click:Connect(function()
+    minimized = not minimized
+    for i, v in pairs(frame:GetChildren()) do
+        if v ~= title and v ~= minBtn then
+            v.Visible = not minimized
+        end
+    end
 end)
+
+-- Fungsi buat label
+local function createLabel(text, yPos)
+    local lbl = Instance.new("TextLabel", frame)
+    lbl.Size = UDim2.new(1, -10, 0, 20)
+    lbl.Position = UDim2.new(0,5,0,yPos)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = text
+    lbl.TextColor3 = Color3.new(1,1,1)
+    lbl.Font = Enum.Font.SourceSans
+    lbl.TextSize = 16
+    return lbl
+end
+
+-- Tampilkan hotkey
+local labels = {}
+labels[#labels+1] = createLabel("Start: "..hotkeys.Start.Name, 30)
+labels[#labels+1] = createLabel("Pause: "..hotkeys.Pause.Name, 55)
+labels[#labels+1] = createLabel("Resume: "..hotkeys.Resume.Name, 80)
+labels[#labels+1] = createLabel("Loop Toggle: "..hotkeys.LoopToggle.Name, 105)
+for i, key in pairs(hotkeys.Checkpoints) do
+    labels[#labels+1] = createLabel("Checkpoint "..i..": "..key.Name, 105 + i*20)
+end
+
+-- Draggable GUI
+local dragging = false
+local dragInput, mousePos, framePos
+title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        mousePos = input.Position
+        framePos = frame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+title.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement then
+        dragInput = input
+    end
+end)
+uis.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local delta = input.Position - mousePos
+        frame.Position = UDim2.new(framePos.X.Scale, framePos.X.Offset + delta.X, framePos.Y.Scale, framePos.Y.Offset + delta.Y)
+    end
+end)
+
+-- Hotkey listener
+uis.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        local key = input.KeyCode
+        if key == hotkeys.Start then startAutoTeleport() end
+        if key == hotkeys.Pause
